@@ -1,55 +1,85 @@
-# Automatic-Number-Plate-Recognition-YOLOv8
-## Demo
+AI License Plate Recognition Pro 🚗
+This is an advanced computer vision application that uses a YOLOv8 model to detect license plates in images and the EasyOCR library to read the plate numbers. The application features a user-friendly graphical interface (GUI) built with Tkinter, allowing for real-time image processing, smart enhancements, and analytics.
 
+(Optional: You can take a screenshot of your app and upload it to a site like Imgur to include a preview here.)
 
-https://github.com/Muhammad-Zeerak-Khan/Automatic-License-Plate-Recognition-using-YOLOv8/assets/79400407/1af57131-3ada-470a-b798-95fff00254e6
+Getting Started
+These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
 
+Prerequisites
+Before you begin, make sure you have the following installed on your system:
 
+Python: This project requires Python 3.8 or newer. You can download it from python.org.
 
-## Data
+Git: You'll need Git to clone the repository. You can download it from git-scm.com.
 
-The video used in the tutorial can be downloaded [here](https://drive.google.com/file/d/1JbwLyqpFCXmftaJY1oap8Sa6KfjoWJta/view?usp=sharing).
+Setup Instructions ⚙️
+Follow these steps carefully to set up the project environment.
 
-## Model
+Step 1: Clone the Repository
+First, open your terminal or command prompt, navigate to the directory where you want to store the project, and clone the repository using the following command:
 
-A Yolov8 pre-trained model (YOLOv8n) was used to detect vehicles.
+git clone <your-repository-url>
+cd <repository-folder-name>
 
-A licensed plate detector was used to detect license plates. The model was trained with Yolov8 using [this dataset](https://universe.roboflow.com/roboflow-universe-projects/license-plate-recognition-rxg4e/dataset/4). 
-- The model is available [here](https://drive.google.com/file/d/1Zmf5ynaTFhmln2z7Qvv-tgjkWQYQ9Zdw/view?usp=sharing).
+Step 2: Create a Virtual Environment
+It is highly recommended to use a virtual environment to keep the project's dependencies isolated. Run the following command inside the project folder to create an environment named .venv:
 
-## Dependencies
+python -m venv .venv
 
-The sort module needs to be downloaded from [this repository](https://github.com/abewley/sort).
+Step 3: Activate the Virtual Environment
+You must activate the environment before installing dependencies. The command differs based on your operating system.
 
-```bash
-git clone https://github.com/abewley/sort
-```
+On Windows (using PowerShell):
 
-## Project Setup
+# If you get an error about script execution being disabled, run this command first:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
-* Make an environment with python=3.10 using the following command 
-``` bash
-conda create --prefix ./env python==3.10 -y
-```
-* Activate the environment
-``` bash
-source activate ./env
-``` 
+# Then, activate the environment:
+.\.venv\Scripts\Activate.ps1
 
-* Install the project dependencies using the following command 
-```bash
+On macOS and Linux:
+
+source .venv/bin/activate
+
+After activation, you should see (.venv) at the beginning of your terminal prompt.
+
+Step 4: Install Required Libraries
+With the virtual environment active, install all the necessary Python libraries from the requirements.txt file using pip:
+
 pip install -r requirements.txt
-```
-* Run main.py with the sample video file to generate the test.csv file 
-``` python
-python main.py
-```
-* Run the add_missing_data.py file for interpolation of values to match up for the missing frames and smooth output.
-```python
-python add_missing_data.py
-```
 
-* Finally run the visualize.py passing in the interpolated csv files and hence obtaining a smooth output for license plate detection.
-```python
-python visualize.py
-```
+This command will automatically download and install all the dependencies, such as ultralytics, easyocr, opencv-python, and Pillow.
+
+Note: The first time you run the application, easyocr will automatically download its language models. This may take a minute and requires an internet connection.
+
+Running the Application ▶️
+Once the setup is complete, you can run the application with the following command:
+
+python app.py
+
+The application window should appear, and you are now ready to start processing images!
+
+How to Use the Application
+Load an Image: Click the "📂 Select Image" button to open a file dialog and choose a picture of a car.
+
+Apply Enhancements (Optional): Use the checkboxes under "⚙️ Smart Image Enhancement" to apply filters that may improve detection in difficult conditions (e.g., low light, rain).
+
+View Results: The application will automatically process the image.
+
+The "🔍 Processed & Detected" panel will show the image with a bounding box around the detected plate.
+
+The "📊 Detection Results" card will display the recognized plate number, its registration status, and the model's confidence level.
+
+Check History: All detections are automatically added to the "📝 Detection History" list for review.
+
+Reprocess: If you change any enhancement settings, click the "🔄 Reprocess" button to run the detection again on the current image.
+
+Project Structure
+app.py: The main Python script that contains all the application logic and GUI code.
+
+best.pt: The pre-trained custom YOLOv8 model file used for license plate detection.
+
+requirements.txt: A list of all Python dependencies required to run the project.
+
+.gitignore: A file that tells Git to ignore the .venv folder.
