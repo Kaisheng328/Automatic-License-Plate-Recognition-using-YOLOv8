@@ -18,11 +18,11 @@ import time
 REGISTERED_PLATES = ["VBG752", "KDH5527", "PLP1701", "VGT190", "VJJ252", "WDV5985"]
 
 # Load the pre-trained YOLOv8 model for license plate detection
-try:
-    model = YOLO('best.pt')
-except Exception as e:
-    messagebox.showerror("Model Error", f"Failed to load YOLOv8 model. Make sure 'best.pt' is in the correct folder.\nError: {e}")
-    exit()
+# try:
+#     model = YOLO('best.pt')
+# except Exception as e:
+#     messagebox.showerror("Model Error", f"Failed to load YOLOv8 model. Make sure 'best.pt' is in the correct folder.\nError: {e}")
+#     exit()
 
 # Initialize the EasyOCR reader for English
 try:
@@ -112,14 +112,16 @@ def clean_plate_text(text):
     """Cleans the recognized text by removing special characters and spaces."""
     return re.sub(r'[^A-Z0-9]', '', text).upper()
 
-def process_image_batch(image_paths, preprocessing_options, progress_callback=None):
+def process_image_batch(self, image_paths, preprocessing_options, progress_callback=None):
     """Process multiple images in batch mode."""
     results = []
     total = len(image_paths)
     
     for i, image_path in enumerate(image_paths):
         try:
-            processed_frame, plate_text, status, confidence, original_frame = process_image(image_path, preprocessing_options)
+            model_name = self.active_model_name.get()
+            active_model = self.models.get(model_name)
+            processed_frame, plate_text, status, confidence, original_frame = process_image(active_model,image_path, preprocessing_options)
             results.append({
                 'path': image_path,
                 'plate': plate_text,
@@ -140,7 +142,7 @@ def process_image_batch(image_paths, preprocessing_options, progress_callback=No
     
     return results
 
-def process_image(image_path, preprocessing_options):
+def process_image(model, image_path, preprocessing_options):
     """Main function that processes the uploaded image with preprocessing options."""
     try:
         frame = cv2.imread(image_path)
@@ -210,7 +212,9 @@ class AdvancedPlateRecognitionApp:
         self.root.geometry("1600x1000")
         self.root.configure(bg="#0f0f23")
         self.root.minsize(1400, 900)
-        
+        self.models = {}
+        self.active_model_name = tk.StringVar()
+        self.load_models() # Load models on startup
         # Advanced styling
         self.setup_advanced_styles()
         
@@ -234,7 +238,24 @@ class AdvancedPlateRecognitionApp:
         
         self.setup_advanced_gui()
         self.load_settings()
+    
+    def load_models(self):
+        """Load YOLO models at startup."""
+        try:
+            self.models['Specialized (best.pt)'] = YOLO('best.pt')
+            self.active_model_name.set('Specialized (best.pt)') # Default model
+        except Exception as e:
+            messagebox.showerror("Model Error", f"Failed to load 'best.pt'. This is the primary model and is required.\nError: {e}")
+            self.root.destroy()
+            return
 
+        try:
+            # This will download yolov8n.pt if it doesn't exist
+            self.models['General (yolov8n.pt)'] = YOLO('yolov8n.pt')
+        except Exception as e:
+            messagebox.showwarning("Model Warning", f"Could not load or download 'yolov8n.pt'. The general model will be unavailable.\nError: {e}")
+
+        
     def setup_advanced_styles(self):
         """Configure advanced dark theme styles with animations."""
         style = ttk.Style()
@@ -343,7 +364,7 @@ class AdvancedPlateRecognitionApp:
         """Setup advanced left control panel."""
         # Quick Actions Card
         self.create_quick_actions_card(parent)
-        
+        self.create_model_selection_card(parent)
         # Smart Preprocessing Card
         self.create_preprocessing_card(parent)
         
@@ -392,6 +413,16 @@ class AdvancedPlateRecognitionApp:
         )
         self.export_btn.pack(side=tk.LEFT)
 
+    def create_model_selection_card(self, parent):
+        """Creates a new card for selecting the YOLO model."""
+        card_frame = self.create_card(parent, "🧠 AI Model Selection")
+        
+        for model_name in self.models.keys():
+            rb = ttk.Radiobutton(card_frame, text=model_name, value=model_name,
+                                variable=self.active_model_name, command=self.on_model_change,
+                                style="TRadiobutton")
+            rb.pack(anchor="w", padx=10, pady=5)
+    
     def create_preprocessing_card(self, parent):
         """Create smart preprocessing options card."""
         card_frame = self.create_card(parent, "⚙️ Smart Image Enhancement", height=250)
@@ -791,6 +822,14 @@ class AdvancedPlateRecognitionApp:
         if self.current_image_path:
             self.reprocess_btn.config(state="normal")
 
+    def on_model_change(self):
+        """Handles the model selection change."""
+        model_name = self.active_model_name.get()
+        self.update_status(f"Active model changed to: {model_name}")
+        self.root.title(f"🚗 AI LPR Pro (Model: {model_name})")
+        if self.current_image_path:
+            self.reprocess_btn.config(state="normal")
+
     def upload_action(self):
         """Handle single image upload."""
         filetypes = (
@@ -837,8 +876,9 @@ class AdvancedPlateRecognitionApp:
         """Thread function for single image processing."""
         try:
             options = {key: var.get() for key, var in self.preprocessing_options.items()}
-            
-            processed_frame, plate_text, status, confidence, original_frame = process_image(
+            model_name = self.active_model_name.get()
+            active_model = self.models.get(model_name)
+            processed_frame, plate_text, status, confidence, original_frame = process_image(active_model,
                 self.current_image_path, options)
             
             # Update UI in main thread
@@ -884,7 +924,22 @@ class AdvancedPlateRecognitionApp:
         # Process in separate thread
         threading.Thread(target=self._process_batch_thread, 
                         args=(filepaths,), daemon=True).start()
+    
+    def _batch_thread(self, filepaths):
+        options = {key: var.get() for key, var in self.preprocessing_options.items()}
+        model_name = self.active_model_name.get()
+        active_model = self.models.get(model_name)
+        if not active_model:
+            self.root.after(0, messagebox.showerror, "Model Error", f"Selected model '{model_name}' is not loaded.")
+            return
 
+        all_results = []
+        for i, path in enumerate(filepaths):
+            self.root.after(0, self.update_status, f"Batch processing {i+1}/{len(filepaths)}...")
+            _, plate, status, conf, _ = process_image(active_model, self.api, path, options)
+            all_results.append({'plate': plate, 'status': status, 'confidence': conf})
+        self.root.after(0, self._update_batch_results, all_results)
+    
     def _process_batch_thread(self, filepaths):
         """Thread function for batch processing."""
         try:
@@ -894,7 +949,7 @@ class AdvancedPlateRecognitionApp:
                 progress_text = f"Processing {current}/{total} images..."
                 self.root.after(0, self.update_status, progress_text)
             
-            results = process_image_batch(filepaths, options, progress_callback)
+            results = process_image_batch(self, filepaths, options, progress_callback)
             
             # Update UI with batch results
             self.root.after(0, self._update_batch_results, results)
