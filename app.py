@@ -366,8 +366,8 @@ class AdvancedPlateRecognitionApp:
         self.create_quick_actions_card(parent)
         self.create_model_selection_card(parent)
         # Smart Preprocessing Card
-        self.create_preprocessing_card(parent)
-        
+        self.create_preprocessing_card_with_auto_tune(parent)
+         
         # Detection Results Card
         self.create_results_card(parent)
         
@@ -376,6 +376,267 @@ class AdvancedPlateRecognitionApp:
         
         # History Management Card
         self.create_history_card(parent)
+    def create_auto_tune_section(self, parent):
+        """Add auto-tune section to preprocessing card."""
+        # Auto-tune frame
+        auto_tune_frame = tk.Frame(parent, bg=self.colors['bg_tertiary'])
+        auto_tune_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        # Separator
+        separator = tk.Frame(auto_tune_frame, height=1, bg=self.colors['text_muted'])
+        separator.pack(fill=tk.X, pady=(0, 10))
+        
+        # Auto-tune header
+        auto_header = tk.Label(auto_tune_frame, text="🎯 Auto-Tune Settings",
+                            font=("Segoe UI", 10, "bold"),
+                            fg=self.colors['accent_orange'],
+                            bg=self.colors['bg_tertiary'])
+        auto_header.pack(anchor="w", padx=10)
+        
+        # Auto-tune options
+        tune_options_frame = tk.Frame(auto_tune_frame, bg=self.colors['bg_tertiary'])
+        tune_options_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Enable auto-tune
+        self.auto_tune_enabled = tk.BooleanVar()
+        auto_tune_cb = self.create_modern_checkbox(
+            tune_options_frame, "🔧 Enable Auto-Tune", self.auto_tune_enabled
+        )
+        auto_tune_cb.pack(anchor="w")
+        
+        # Auto-tune mode selection
+        mode_frame = tk.Frame(tune_options_frame, bg=self.colors['bg_tertiary'])
+        mode_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        tk.Label(mode_frame, text="Mode:", font=("Segoe UI", 9),
+                fg=self.colors['text_secondary'], bg=self.colors['bg_tertiary']).pack(side=tk.LEFT)
+        
+        self.auto_tune_mode = tk.StringVar(value="fast")
+        
+        modes = [("⚡ Fast (5 combinations)", "fast"),
+                ("🎯 Balanced (10 combinations)", "balanced"), 
+                ("🔬 Thorough (20 combinations)", "thorough")]
+        
+        for text, mode in modes:
+            rb = tk.Radiobutton(mode_frame, text=text, value=mode,
+                            variable=self.auto_tune_mode,
+                            font=("Segoe UI", 8),
+                            bg=self.colors['bg_tertiary'],
+                            fg=self.colors['text_primary'],
+                            selectcolor=self.colors['bg_secondary'],
+                            activebackground=self.colors['bg_tertiary'])
+            rb.pack(anchor="w", padx=(20, 0))
+        
+        # Auto-apply best settings checkbox
+        self.auto_apply_best = tk.BooleanVar(value=True)
+        auto_apply_cb = self.create_modern_checkbox(
+            tune_options_frame, "📋 Auto-apply best settings", self.auto_apply_best
+        )
+        auto_apply_cb.pack(anchor="w", pady=(5, 0))
+
+    def get_auto_tune_combinations(self, mode="fast"):
+        """Get preprocessing combinations for auto-tuning based on mode."""
+        base_combinations = [
+            # Basic combinations
+            {},  # No preprocessing
+            {'contrast_enhancement': True},
+            {'brightness_contrast': True},
+            {'sharpening': True},
+            {'gamma_correction': True}
+        ]
+        
+        balanced_combinations = [
+            {'noise_reduction': True},
+            {'edge_enhancement': True},
+            {'contrast_enhancement': True, 'brightness_contrast': True},
+            {'contrast_enhancement': True, 'sharpening': True},
+            {'gamma_correction': True, 'brightness_contrast': True}
+        ]
+        
+        thorough_combinations = [
+            {'noise_reduction': True, 'contrast_enhancement': True},
+            {'sharpening': True, 'edge_enhancement': True},
+            {'gamma_correction': True, 'contrast_enhancement': True},
+            {'brightness_contrast': True, 'sharpening': True},
+            {'noise_reduction': True, 'brightness_contrast': True},
+            {'contrast_enhancement': True, 'edge_enhancement': True},
+            {'gamma_correction': True, 'sharpening': True},
+            {'noise_reduction': True, 'gamma_correction': True},
+            {'brightness_contrast': True, 'edge_enhancement': True},
+            # Complex combinations
+            {'noise_reduction': True, 'contrast_enhancement': True, 'sharpening': True},
+            {'gamma_correction': True, 'brightness_contrast': True, 'edge_enhancement': True},
+            {'contrast_enhancement': True, 'sharpening': True, 'edge_enhancement': True},
+            {'noise_reduction': True, 'gamma_correction': True, 'brightness_contrast': True},
+            {'noise_reduction': True, 'contrast_enhancement': True, 'edge_enhancement': True},
+            {'gamma_correction': True, 'contrast_enhancement': True, 'sharpening': True}
+        ]
+        
+        if mode == "fast":
+            return base_combinations
+        elif mode == "balanced":
+            return base_combinations + balanced_combinations
+        else:  # thorough
+            return base_combinations + balanced_combinations + thorough_combinations
+
+    def auto_tune_image(self, image_path, callback=None):
+        """Auto-tune image preprocessing to find best settings."""
+        if not self.auto_tune_enabled.get():
+            return None
+        
+        mode = self.auto_tune_mode.get()
+        combinations = self.get_auto_tune_combinations(mode)
+        
+        self.update_status(f"🎯 Auto-tuning with {len(combinations)} combinations...")
+        self.show_progress(f"Auto-tuning ({mode} mode)")
+        
+        best_result = None
+        best_confidence = 0
+        best_combination = {}
+        best_plate = "No Plate Detected"
+        best_status = "N/A"
+        
+        model_name = self.active_model_name.get()
+        active_model = self.models.get(model_name)
+        
+        if not active_model:
+            if callback:
+                callback(None)
+            return None
+        
+        for i, combination in enumerate(combinations):
+            try:
+                # Update progress
+                progress_text = f"Testing combination {i+1}/{len(combinations)}"
+                if callback:
+                    self.root.after(0, callback, i+1, len(combinations), progress_text)
+                
+                # Process with this combination
+                processed_frame, plate_text, status, confidence, original_frame = process_image(
+                    active_model, image_path, combination
+                )
+                
+                # Check if this result is better
+                if confidence is not None and confidence > best_confidence:
+                    best_confidence = confidence
+                    best_combination = combination.copy()
+                    best_result = (processed_frame, plate_text, status, confidence, original_frame)
+                    best_plate = plate_text
+                    best_status = status
+                    
+            except Exception as e:
+                continue  # Skip failed combinations
+        
+        # Apply best settings if auto-apply is enabled
+        if self.auto_apply_best.get() and best_combination:
+            self.apply_combination(best_combination)
+        
+        return {
+            'result': best_result,
+            'combination': best_combination,
+            'confidence': best_confidence,
+            'plate': best_plate,
+            'status': best_status,
+            'total_tested': len(combinations)
+        }
+    
+    def apply_combination(self, combination):
+        """Apply a preprocessing combination to the UI."""
+        # Clear current settings
+        for var in self.preprocessing_options.values():
+            var.set(False)
+        
+        # Apply new combination
+        for key, value in combination.items():
+            if key in self.preprocessing_options:
+                self.preprocessing_options[key].set(value)
+
+    def show_auto_tune_results(self, tune_results):
+        """Show auto-tune results in a dialog."""
+        if not tune_results or not tune_results['result']:
+            messagebox.showinfo("Auto-Tune Results", 
+                            f"Auto-tuning completed but no improvements found.\n"
+                            f"Tested {tune_results['total_tested'] if tune_results else 0} combinations.")
+            return
+        
+        # Create results dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🎯 Auto-Tune Results")
+        dialog.geometry("500x500")
+        dialog.configure(bg=self.colors['bg_secondary'])
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+        dialog.geometry(f"500x400+{x}+{y}")
+        
+        # Header
+        header = tk.Label(dialog, text="🎯 Auto-Tune Results",
+                        font=("Segoe UI", 16, "bold"),
+                        fg=self.colors['accent_orange'],
+                        bg=self.colors['bg_secondary'])
+        header.pack(pady=20)
+        
+        # Results frame
+        results_frame = tk.Frame(dialog, bg=self.colors['bg_tertiary'], relief='solid', bd=1)
+        results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        
+        # Best result info
+        info_text = f"""
+    ✅ Auto-tuning completed successfully!
+
+    📊 Results:
+    • License Plate: {tune_results['plate']}
+    • Status: {tune_results['status']}
+    • Confidence: {tune_results['confidence']:.1%}
+    • Combinations Tested: {tune_results['total_tested']}
+
+    🔧 Best Settings Applied:
+    """
+        
+        for key, value in tune_results['combination'].items():
+            if value:
+                option_names = {
+                    'noise_reduction': 'Noise Reduction',
+                    'contrast_enhancement': 'Contrast Enhancement', 
+                    'brightness_contrast': 'Auto Brightness/Contrast',
+                    'sharpening': 'Sharpening',
+                    'gamma_correction': 'Gamma Correction',
+                    'edge_enhancement': 'Edge Enhancement'
+                }
+                info_text += f"   • {option_names.get(key, key)}\n"
+        
+        if not tune_results['combination']:
+            info_text += "   • No preprocessing (original image was best)\n"
+        
+        info_label = tk.Label(results_frame, text=info_text,
+                            font=("Segoe UI", 10),
+                            fg=self.colors['text_primary'],
+                            bg=self.colors['bg_tertiary'],
+                            justify=tk.LEFT)
+        info_label.pack(padx=20, pady=20, anchor="w")
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=self.colors['bg_secondary'])
+        button_frame.pack(pady=10)
+        
+        ok_btn = self.create_modern_button(button_frame, "✅ OK", dialog.destroy,
+                                        self.colors['accent_green'], width=100, height=35)
+        ok_btn.pack(side=tk.LEFT, padx=5)
+        
+        revert_btn = self.create_modern_button(button_frame, "↶ Revert", 
+                                            lambda: self.revert_auto_tune(dialog),
+                                            self.colors['accent_red'], width=100, height=35)
+        revert_btn.pack(side=tk.LEFT, padx=5)
+
+    def revert_auto_tune(self, dialog):
+        """Revert auto-tune changes."""
+        self.clear_presets()
+        dialog.destroy()
+        self.update_status("Auto-tune settings reverted")
 
     def create_quick_actions_card(self, parent):
         """Create quick actions card with modern buttons."""
@@ -386,13 +647,13 @@ class AdvancedPlateRecognitionApp:
         file_frame.pack(fill=tk.X, pady=(0, 10))
         
         self.upload_btn = self.create_modern_button(
-            file_frame, "📂 Select Image", self.upload_action,
+            file_frame, "📂 Select Image", self.upload_action_with_auto_tune,
             bg_color=self.colors['accent_blue'], width=180, height=40
         )
         self.upload_btn.pack(side=tk.LEFT, padx=(0, 10))
         
         self.batch_btn = self.create_modern_button(
-            file_frame, "📁 Batch Process", self.batch_process,
+            file_frame, "📁 Batch Process", self.batch_process_with_auto_tune,
             bg_color=self.colors['accent_green'], width=180, height=40
         )
         self.batch_btn.pack(side=tk.LEFT)
@@ -423,11 +684,11 @@ class AdvancedPlateRecognitionApp:
                                 style="TRadiobutton")
             rb.pack(anchor="w", padx=10, pady=5)
     
-    def create_preprocessing_card(self, parent):
-        """Create smart preprocessing options card."""
-        card_frame = self.create_card(parent, "⚙️ Smart Image Enhancement", height=250)
+    def create_preprocessing_card_with_auto_tune(self, parent):
+        """Create smart preprocessing options card with auto-tune."""
+        card_frame = self.create_card(parent, "⚙️ Smart Image Enhancement", height=350)  # Increased height
         
-        # Preset buttons
+        # Preset buttons (existing code)
         preset_frame = tk.Frame(card_frame, bg=self.colors['bg_tertiary'])
         preset_frame.pack(fill=tk.X, pady=(0, 15))
         
@@ -444,18 +705,17 @@ class AdvancedPlateRecognitionApp:
         
         preset_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
         
-        # Individual options with modern checkboxes
+        # Individual options (existing code)
         options_frame = tk.Frame(card_frame, bg=self.colors['bg_tertiary'])
-        options_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        options_frame.pack(fill=tk.X, pady=10)
         
         options_display = {
             'noise_reduction': '🔧 Noise Reduction',
             'contrast_enhancement': '🌟 Contrast Boost', 
             'brightness_contrast': '☀️ Auto Exposure',
-            'sharpening': '📐 Sharpening',
+            'sharpening': '🔍 Sharpening',
             'gamma_correction': '🔆 Gamma Correction',
-            'edge_enhancement': '📏 Edge Enhancement',
-            'plate_ocr_enhancement': '🔍 OCR Optimization'
+            'edge_enhancement': '🔍 Edge Enhancement'
         }
 
         for i, (key, display_name) in enumerate(options_display.items()):
@@ -463,7 +723,10 @@ class AdvancedPlateRecognitionApp:
                 options_frame, display_name, self.preprocessing_options[key]
             )
             cb.grid(row=i//2, column=i%2, sticky="w", padx=10, pady=3)
-
+        
+        # Add auto-tune section
+        self.create_auto_tune_section(card_frame)
+    
     def create_results_card(self, parent):
         """Create detection results display card."""
         card_frame = self.create_card(parent, "📊 Detection Results")
@@ -830,8 +1093,8 @@ class AdvancedPlateRecognitionApp:
         if self.current_image_path:
             self.reprocess_btn.config(state="normal")
 
-    def upload_action(self):
-        """Handle single image upload."""
+    def upload_action_with_auto_tune(self):
+        """Handle single image upload with auto-tune option."""
         filetypes = (
             ("Image files", "*.jpg *.jpeg *.png *.bmp *.tiff *.webp"),
             ("JPEG files", "*.jpg *.jpeg"),
@@ -846,10 +1109,10 @@ class AdvancedPlateRecognitionApp:
         
         if filepath:
             self.current_image_path = filepath
-            self.process_single_image()
+            self.process_single_image_with_auto_tune()  # Use the new auto-tune method
 
-    def batch_process(self):
-        """Handle batch processing of multiple images."""
+    def batch_process_with_auto_tune(self):
+        """Handle batch processing of multiple images with auto-tune options."""
         filepaths = filedialog.askopenfilenames(
             title="Select Multiple Images for Batch Processing",
             filetypes=(
@@ -859,18 +1122,178 @@ class AdvancedPlateRecognitionApp:
         )
         
         if filepaths:
-            self.batch_mode = True
-            self.process_batch_images(filepaths)
+            if self.auto_tune_enabled.get():
+                self.show_batch_auto_tune_dialog(filepaths)
+            else:
+                self.batch_mode = True
+                self.process_batch_images(filepaths)
 
-    def process_single_image(self):
-        """Process a single image with progress indication."""
+    def show_batch_auto_tune_dialog(self, filepaths):
+        """Show dialog for batch auto-tune options."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🚀 Batch Auto-Tune Options")
+        dialog.geometry("600x700")
+        dialog.configure(bg=self.colors['bg_secondary'])
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (300)
+        y = (dialog.winfo_screenheight() // 2) - (250)
+        dialog.geometry(f"600x700+{x}+{y}")
+        
+        # Header
+        header = tk.Label(dialog, text="🚀 Batch Auto-Tune Configuration",
+                        font=("Segoe UI", 16, "bold"),
+                        fg=self.colors['accent_blue'],
+                        bg=self.colors['bg_secondary'])
+        header.pack(pady=20)
+        
+        # Info
+        info_text = f"Selected {len(filepaths)} images for batch processing with auto-tuning."
+        info_label = tk.Label(dialog, text=info_text,
+                            font=("Segoe UI", 11),
+                            fg=self.colors['text_secondary'],
+                            bg=self.colors['bg_secondary'])
+        info_label.pack(pady=(0, 20))
+        
+        # Options frame
+        options_frame = tk.Frame(dialog, bg=self.colors['bg_tertiary'], relief='solid', bd=1)
+        options_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        
+        # Auto-tune strategy
+        strategy_frame = tk.Frame(options_frame, bg=self.colors['bg_tertiary'])
+        strategy_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        tk.Label(strategy_frame, text="🎯 Auto-Tune Strategy:",
+                font=("Segoe UI", 12, "bold"),
+                fg=self.colors['accent_orange'],
+                bg=self.colors['bg_tertiary']).pack(anchor="w")
+        
+        self.batch_auto_tune_strategy = tk.StringVar(value="individual")
+        
+        strategies = [
+            ("🔄 Individual - Optimize each image separately (Best Quality)", "individual"),
+            ("⚡ Global - Find one setting for all images (Faster)", "global"),
+            ("📊 Adaptive - Learn from each image (Smart)", "adaptive")
+        ]
+        
+        for text, strategy in strategies:
+            rb = tk.Radiobutton(strategy_frame, text=text, value=strategy,
+                            variable=self.batch_auto_tune_strategy,
+                            font=("Segoe UI", 10),
+                            bg=self.colors['bg_tertiary'],
+                            fg=self.colors['text_primary'],
+                            selectcolor=self.colors['bg_secondary'],
+                            activebackground=self.colors['bg_tertiary'],
+                            wraplength=500)
+            rb.pack(anchor="w", padx=20, pady=5)
+        
+        # Performance options
+        perf_frame = tk.Frame(options_frame, bg=self.colors['bg_tertiary'])
+        perf_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        tk.Label(perf_frame, text="⚡ Performance Options:",
+                font=("Segoe UI", 12, "bold"),
+                fg=self.colors['accent_green'],
+                bg=self.colors['bg_tertiary']).pack(anchor="w")
+        
+        self.batch_early_stop = tk.BooleanVar(value=True)
+        early_stop_cb = tk.Checkbutton(perf_frame,
+                                    text="🎯 Early stop when confidence > 95%",
+                                    variable=self.batch_early_stop,
+                                    font=("Segoe UI", 10),
+                                    bg=self.colors['bg_tertiary'],
+                                    fg=self.colors['text_primary'],
+                                    selectcolor=self.colors['bg_secondary'],
+                                    activebackground=self.colors['bg_tertiary'])
+        early_stop_cb.pack(anchor="w", padx=20, pady=5)
+        
+        self.batch_parallel_processing = tk.BooleanVar(value=False)
+        parallel_cb = tk.Checkbutton(perf_frame,
+                                    text="🚀 Parallel processing (Experimental)",
+                                    variable=self.batch_parallel_processing,
+                                    font=("Segoe UI", 10),
+                                    bg=self.colors['bg_tertiary'],
+                                    fg=self.colors['text_primary'],
+                                    selectcolor=self.colors['bg_secondary'],
+                                    activebackground=self.colors['bg_tertiary'])
+        parallel_cb.pack(anchor="w", padx=20, pady=5)
+        
+        # Progress estimation
+        est_frame = tk.Frame(options_frame, bg=self.colors['bg_tertiary'])
+        est_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        mode = self.auto_tune_mode.get()
+        combinations = len(self.get_auto_tune_combinations(mode))
+        strategy = self.batch_auto_tune_strategy.get()
+        
+        if strategy == "individual":
+            total_tests = len(filepaths) * combinations
+        elif strategy == "global":
+            total_tests = combinations
+        else:  # adaptive
+            total_tests = len(filepaths) * (combinations // 2)  # Average estimate
+        
+        est_text = f"📊 Estimated Tests: {total_tests:,}\n"
+        est_text += f"⏱️ Estimated Time: {total_tests * 2} - {total_tests * 5} seconds"
+        
+        est_label = tk.Label(est_frame, text=est_text,
+                            font=("Segoe UI", 9),
+                            fg=self.colors['text_muted'],
+                            bg=self.colors['bg_tertiary'],
+                            justify=tk.LEFT)
+        est_label.pack(anchor="w")
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=self.colors['bg_secondary'])
+        button_frame.pack(pady=20)
+        
+        start_btn = self.create_modern_button(button_frame, "🚀 Start Batch Auto-Tune", 
+                                            lambda: self.start_batch_auto_tune(dialog, filepaths),
+                                            self.colors['accent_blue'], width=200, height=40)
+        start_btn.pack(side=tk.LEFT, padx=10)
+        
+        cancel_btn = self.create_modern_button(button_frame, "❌ Cancel", dialog.destroy,
+                                            self.colors['accent_red'], width=100, height=40)
+        cancel_btn.pack(side=tk.LEFT, padx=10)
+
+    def process_single_image_with_auto_tune(self):
+        """Process a single image with optional auto-tuning."""
         if not self.current_image_path:
             return
         
-        self.show_progress("Processing image...")
-        
-        # Process in a separate thread to keep UI responsive
-        threading.Thread(target=self._process_single_thread, daemon=True).start()
+        if self.auto_tune_enabled.get():
+            self.show_progress("Auto-tuning image...")
+            threading.Thread(target=self._auto_tune_thread, daemon=True).start()
+        else:
+            self.show_progress("Processing image...")
+            threading.Thread(target=self._process_single_thread, daemon=True).start()
+
+    def _auto_tune_thread(self):
+        """Thread function for auto-tuning."""
+        try:
+            def progress_callback(current, total, message):
+                self.root.after(0, self.update_status, message)
+            
+            tune_results = self.auto_tune_image(self.current_image_path, progress_callback)
+            
+            if tune_results and tune_results['result']:
+                processed_frame, plate_text, status, confidence, original_frame = tune_results['result']
+                
+                # Update UI with best result
+                self.root.after(0, self._update_single_result, 
+                            processed_frame, plate_text, status, confidence, original_frame)
+                
+                # Show auto-tune results
+                self.root.after(0, self.show_auto_tune_results, tune_results)
+            else:
+                # Fall back to current settings
+                self.root.after(0, self._process_single_thread)
+                
+        except Exception as e:
+            self.root.after(0, self._handle_error, str(e))
 
     def _process_single_thread(self):
         """Thread function for single image processing."""
@@ -925,6 +1348,522 @@ class AdvancedPlateRecognitionApp:
         threading.Thread(target=self._process_batch_thread, 
                         args=(filepaths,), daemon=True).start()
     
+    def start_batch_auto_tune(self, dialog, filepaths):
+        """Start the batch auto-tune process."""
+        dialog.destroy()
+        self.batch_mode = True
+        
+        strategy = self.batch_auto_tune_strategy.get()
+        early_stop = self.batch_early_stop.get()
+        parallel = self.batch_parallel_processing.get()
+        
+        self.update_status(f"🚀 Starting batch auto-tune ({strategy} strategy)")
+        self.show_progress("Initializing batch auto-tune...")
+        
+        # Start processing thread
+        threading.Thread(target=self._batch_auto_tune_thread, 
+                        args=(filepaths, strategy, early_stop, parallel), 
+                        daemon=True).start()
+    
+    def _batch_auto_tune_thread(self, filepaths, strategy, early_stop, parallel):
+        """Thread function for batch auto-tuning."""
+        try:
+            if strategy == "individual":
+                results = self._batch_individual_auto_tune(filepaths, early_stop)
+            elif strategy == "global":
+                results = self._batch_global_auto_tune(filepaths, early_stop)
+            else:  # adaptive
+                results = self._batch_adaptive_auto_tune(filepaths, early_stop)
+            
+            # Update UI with batch results
+            self.root.after(0, self._update_batch_auto_tune_results, results)
+            
+        except Exception as e:
+            self.root.after(0, self._handle_error, str(e))
+
+    def _batch_individual_auto_tune(self, filepaths, early_stop):
+        """Individual auto-tune: optimize each image separately."""
+        results = []
+        model_name = self.active_model_name.get()
+        active_model = self.models.get(model_name)
+        
+        for i, filepath in enumerate(filepaths):
+            try:
+                self.root.after(0, self.update_status, 
+                            f"Auto-tuning image {i+1}/{len(filepaths)}: {os.path.basename(filepath)}")
+                
+                # Auto-tune this individual image
+                best_result = self._find_best_combination_for_image(
+                    active_model, filepath, early_stop)
+                
+                if best_result:
+                    results.append({
+                        'path': filepath,
+                        'plate': best_result['plate'],
+                        'status': best_result['status'],
+                        'confidence': best_result['confidence'],
+                        'combination': best_result['combination'],
+                        'tests_performed': best_result['tests_performed'],
+                        'success': True
+                    })
+                    
+                    # Add to history
+                    if best_result['status'] != "N/A":
+                        self.root.after(0, self.add_to_history, 
+                                    best_result['plate'], best_result['status'], best_result['confidence'])
+                        self.root.after(0, self.update_statistics, best_result['status'])
+                else:
+                    results.append({
+                        'path': filepath,
+                        'error': 'No valid detection found',
+                        'success': False
+                    })
+                    
+            except Exception as e:
+                results.append({
+                    'path': filepath,
+                    'error': str(e),
+                    'success': False
+                })
+        
+        return results
+
+    def _batch_global_auto_tune(self, filepaths, early_stop):
+        """Global auto-tune: find one setting that works best for all images."""
+        self.root.after(0, self.update_status, "Finding global optimal settings...")
+        
+        model_name = self.active_model_name.get()
+        active_model = self.models.get(model_name)
+        
+        # Test combinations on a sample of images (max 5 for performance)
+        sample_images = filepaths[:min(5, len(filepaths))]
+        combinations = self.get_auto_tune_combinations(self.auto_tune_mode.get())
+        
+        best_global_combination = {}
+        best_global_score = 0
+        
+        for i, combination in enumerate(combinations):
+            total_confidence = 0
+            valid_detections = 0
+            
+            self.root.after(0, self.update_status, 
+                        f"Testing global combination {i+1}/{len(combinations)}")
+            
+            for sample_path in sample_images:
+                try:
+                    _, _, _, confidence, _ = process_image(active_model, sample_path, combination)
+                    if confidence is not None:
+                        total_confidence += confidence
+                        valid_detections += 1
+                except:
+                    continue
+            
+            # Calculate average confidence for this combination
+            if valid_detections > 0:
+                avg_confidence = total_confidence / valid_detections
+                if avg_confidence > best_global_score:
+                    best_global_score = avg_confidence
+                    best_global_combination = combination.copy()
+            
+            # Early stop if we find a very good combination
+            if early_stop and best_global_score > 0.95:
+                break
+        
+        # Apply best combination to all images
+        self.root.after(0, self.update_status, "Applying best global settings to all images...")
+        
+        results = []
+        for i, filepath in enumerate(filepaths):
+            try:
+                self.root.after(0, self.update_status, 
+                            f"Processing with global settings {i+1}/{len(filepaths)}")
+                
+                processed_frame, plate_text, status, confidence, original_frame = process_image(
+                    active_model, filepath, best_global_combination)
+                
+                results.append({
+                    'path': filepath,
+                    'plate': plate_text,
+                    'status': status,
+                    'confidence': confidence,
+                    'combination': best_global_combination,
+                    'success': processed_frame is not None
+                })
+                
+                # Add to history
+                if status != "N/A":
+                    self.root.after(0, self.add_to_history, plate_text, status, confidence)
+                    self.root.after(0, self.update_statistics, status)
+                    
+            except Exception as e:
+                results.append({
+                    'path': filepath,
+                    'error': str(e),
+                    'success': False
+                })
+        
+        return results
+
+    def _batch_adaptive_auto_tune(self, filepaths, early_stop):
+        """Adaptive auto-tune: learn from each image and adapt settings."""
+        results = []
+        model_name = self.active_model_name.get()
+        active_model = self.models.get(model_name)
+        
+        # Keep track of successful combinations
+        successful_combinations = {}
+        combination_history = []
+        
+        for i, filepath in enumerate(filepaths):
+            try:
+                self.root.after(0, self.update_status, 
+                            f"Adaptive tuning {i+1}/{len(filepaths)}: {os.path.basename(filepath)}")
+                
+                # For first few images, do full auto-tune
+                if i < 3:
+                    best_result = self._find_best_combination_for_image(
+                        active_model, filepath, early_stop)
+                    
+                    if best_result:
+                        # Track successful combination
+                        combo_key = str(sorted(best_result['combination'].items()))
+                        successful_combinations[combo_key] = successful_combinations.get(combo_key, 0) + 1
+                        combination_history.append(best_result['combination'])
+                else:
+                    # For later images, try successful combinations first
+                    best_result = self._adaptive_find_best_combination(
+                        active_model, filepath, successful_combinations, early_stop)
+                
+                if best_result:
+                    results.append({
+                        'path': filepath,
+                        'plate': best_result['plate'],
+                        'status': best_result['status'],
+                        'confidence': best_result['confidence'],
+                        'combination': best_result['combination'],
+                        'tests_performed': best_result.get('tests_performed', 0),
+                        'success': True
+                    })
+                    
+                    # Add to history
+                    if best_result['status'] != "N/A":
+                        self.root.after(0, self.add_to_history, 
+                                    best_result['plate'], best_result['status'], best_result['confidence'])
+                        self.root.after(0, self.update_statistics, best_result['status'])
+                else:
+                    results.append({
+                        'path': filepath,
+                        'error': 'No valid detection found',
+                        'success': False
+                    })
+                    
+            except Exception as e:
+                results.append({
+                    'path': filepath,
+                    'error': str(e),
+                    'success': False
+                })
+        
+        return results
+
+    def _find_best_combination_for_image(self, active_model, image_path, early_stop):
+        """Find the best preprocessing combination for a single image."""
+        combinations = self.get_auto_tune_combinations(self.auto_tune_mode.get())
+        
+        best_result = None
+        best_confidence = 0
+        tests_performed = 0
+        
+        for combination in combinations:
+            try:
+                processed_frame, plate_text, status, confidence, original_frame = process_image(
+                    active_model, image_path, combination)
+                
+                tests_performed += 1
+                
+                if confidence is not None and confidence > best_confidence:
+                    best_confidence = confidence
+                    best_result = {
+                        'plate': plate_text,
+                        'status': status,
+                        'confidence': confidence,
+                        'combination': combination.copy(),
+                        'tests_performed': tests_performed
+                    }
+                    
+                    # Early stop if confidence is very high
+                    if early_stop and confidence > 0.95:
+                        break
+                        
+            except:
+                continue
+        
+        return best_result
+
+    def _adaptive_find_best_combination(self, active_model, image_path, successful_combinations, early_stop):
+        """Find best combination using adaptive strategy."""
+        # Try most successful combinations first
+        sorted_combos = sorted(successful_combinations.items(), key=lambda x: x[1], reverse=True)
+        
+        best_result = None
+        best_confidence = 0
+        tests_performed = 0
+        
+        # Try top 3 most successful combinations first
+        for combo_str, success_count in sorted_combos[:3]:
+            try:
+                # Convert string back to dict
+                combination = {}
+                combo_items = eval(combo_str)  # Safe since we created it
+                for key, value in combo_items:
+                    combination[key] = value
+                
+                processed_frame, plate_text, status, confidence, original_frame = process_image(
+                    active_model, image_path, combination)
+                
+                tests_performed += 1
+                
+                if confidence is not None and confidence > best_confidence:
+                    best_confidence = confidence
+                    best_result = {
+                        'plate': plate_text,
+                        'status': status,
+                        'confidence': confidence,
+                        'combination': combination.copy(),
+                        'tests_performed': tests_performed
+                    }
+                    
+                    if early_stop and confidence > 0.95:
+                        break
+                        
+            except:
+                continue
+        
+        # If no good result from successful combos, do limited full search
+        if not best_result or best_confidence < 0.7:
+            full_result = self._find_best_combination_for_image(active_model, image_path, early_stop)
+            if full_result and (not best_result or full_result['confidence'] > best_confidence):
+                best_result = full_result
+        
+        return best_result
+
+    def _update_batch_auto_tune_results(self, results):
+        """Update UI with batch auto-tune results."""
+        self.hide_progress()
+        self.batch_mode = False
+        
+        # Process results
+        successful = [r for r in results if r.get('success', False)]
+        failed = [r for r in results if not r.get('success', False)]
+        
+        # Calculate statistics
+        total_tests = sum(r.get('tests_performed', 0) for r in successful)
+        avg_confidence = sum(r['confidence'] for r in successful if r['confidence']) / len(successful) if successful else 0
+        
+        # Show comprehensive summary
+        self.show_batch_auto_tune_summary(results, successful, failed, total_tests, avg_confidence)
+
+    def show_batch_auto_tune_summary(self, all_results, successful, failed, total_tests, avg_confidence):
+        """Show comprehensive batch auto-tune summary."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🚀 Batch Auto-Tune Results")
+        dialog.geometry("700x800")
+        dialog.configure(bg=self.colors['bg_secondary'])
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (350)
+        y = (dialog.winfo_screenheight() // 2) - (300)
+        dialog.geometry(f"700x800+{x}+{y}")
+        
+        # Header
+        header = tk.Label(dialog, text="🚀 Batch Auto-Tune Complete!",
+                        font=("Segoe UI", 18, "bold"),
+                        fg=self.colors['accent_blue'],
+                        bg=self.colors['bg_secondary'])
+        header.pack(pady=20)
+        
+        # Results frame with scrollbar
+        results_container = tk.Frame(dialog, bg=self.colors['bg_secondary'])
+        results_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        
+        canvas = tk.Canvas(results_container, bg=self.colors['bg_tertiary'])
+        scrollbar = ttk.Scrollbar(results_container, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg_tertiary'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Summary statistics
+        summary_text = f"""
+    📊 BATCH AUTO-TUNE SUMMARY
+
+    ✅ Successfully Processed: {len(successful)} images
+    ❌ Failed: {len(failed)} images  
+    🔬 Total Tests Performed: {total_tests:,}
+    📈 Average Confidence: {avg_confidence:.1%}
+    ⚡ Strategy: {self.batch_auto_tune_strategy.get().title()}
+
+    🏆 TOP PERFORMING SETTINGS:
+    """
+        
+        # Find most common successful combinations
+        if successful:
+            combo_counts = {}
+            for result in successful:
+                combo_key = str(sorted(result.get('combination', {}).items()))
+                combo_counts[combo_key] = combo_counts.get(combo_key, 0) + 1
+            
+            top_combos = sorted(combo_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+            for i, (combo_str, count) in enumerate(top_combos, 1):
+                try:
+                    combo_items = eval(combo_str)
+                    if combo_items:
+                        summary_text += f"\n{i}. Used {count} times:\n"
+                        for key, value in combo_items:
+                            if value:
+                                option_names = {
+                                    'noise_reduction': 'Noise Reduction',
+                                    'contrast_enhancement': 'Contrast Enhancement', 
+                                    'brightness_contrast': 'Auto Brightness/Contrast',
+                                    'sharpening': 'Sharpening',
+                                    'gamma_correction': 'Gamma Correction',
+                                    'edge_enhancement': 'Edge Enhancement'
+                                }
+                                summary_text += f"   • {option_names.get(key, key)}\n"
+                    else:
+                        summary_text += f"\n{i}. Original image (no preprocessing) - {count} times\n"
+                except:
+                    continue
+        
+        summary_label = tk.Label(scrollable_frame, text=summary_text,
+                            font=("Consolas", 10),
+                            fg=self.colors['text_primary'],
+                            bg=self.colors['bg_tertiary'],
+                            justify=tk.LEFT)
+        summary_label.pack(padx=20, pady=20, anchor="w")
+        
+        # Individual results
+        if successful:
+            results_text = "📋 DETAILED RESULTS:\n\n"
+            for result in successful[:10]:  # Show first 10
+                filename = os.path.basename(result['path'])
+                results_text += f"📄 {filename}\n"
+                results_text += f"   Plate: {result['plate']}\n"
+                results_text += f"   Status: {result['status']}\n"
+                results_text += f"   Confidence: {result['confidence']:.1%}\n"
+                results_text += f"   Tests: {result.get('tests_performed', '?')}\n\n"
+            
+            if len(successful) > 10:
+                results_text += f"... and {len(successful) - 10} more successful results\n"
+        
+        results_label = tk.Label(scrollable_frame, text=results_text,
+                            font=("Consolas", 9),
+                            fg=self.colors['text_secondary'],
+                            bg=self.colors['bg_tertiary'],
+                            justify=tk.LEFT)
+        results_label.pack(padx=20, pady=(0, 20), anchor="w")
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=self.colors['bg_secondary'])
+        button_frame.pack(pady=20)
+        
+        export_btn = self.create_modern_button(button_frame, "💾 Export Results", 
+                                            lambda: self.export_batch_auto_tune_results(all_results),
+                                            self.colors['accent_green'], width=150, height=35)
+        export_btn.pack(side=tk.LEFT, padx=5)
+        
+        ok_btn = self.create_modern_button(button_frame, "✅ OK", dialog.destroy,
+                                        self.colors['accent_blue'], width=100, height=35)
+        ok_btn.pack(side=tk.LEFT, padx=5)
+
+    def export_batch_auto_tune_results(self, results):
+        """Export batch auto-tune results."""
+        filename = filedialog.asksaveasfilename(
+            title="Export Batch Auto-Tune Results",
+            defaultextension=".json",
+            filetypes=(
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            )
+        )
+        
+        if filename:
+            try:
+                export_data = {
+                    'export_time': datetime.now().isoformat(),
+                    'strategy': self.batch_auto_tune_strategy.get(),
+                    'mode': self.auto_tune_mode.get(),
+                    'total_images': len(results),
+                    'successful': len([r for r in results if r.get('success', False)]),
+                    'failed': len([r for r in results if not r.get('success', False)]),
+                    'results': []
+                }
+                
+                for result in results:
+                    export_result = {
+                        'filename': os.path.basename(result['path']),
+                        'success': result.get('success', False)
+                    }
+                    
+                    if result.get('success'):
+                        export_result.update({
+                            'plate': result['plate'],
+                            'status': result['status'],
+                            'confidence': result['confidence'],
+                            'combination': result.get('combination', {}),
+                            'tests_performed': result.get('tests_performed', 0)
+                        })
+                    else:
+                        export_result['error'] = result.get('error', 'Unknown error')
+                    
+                    export_data['results'].append(export_result)
+                
+                if filename.endswith('.json'):
+                    with open(filename, 'w') as f:
+                        json.dump(export_data, f, indent=2)
+                else:  # CSV
+                    import csv
+                    with open(filename, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['Filename', 'Success', 'Plate', 'Status', 'Confidence', 'Tests'])
+                        
+                        for result in results:
+                            if result.get('success'):
+                                writer.writerow([
+                                    os.path.basename(result['path']),
+                                    'Yes',
+                                    result['plate'],
+                                    result['status'],
+                                    f"{result['confidence']:.2%}",
+                                    result.get('tests_performed', 0)
+                                ])
+                            else:
+                                writer.writerow([
+                                    os.path.basename(result['path']),
+                                    'No',
+                                    '',
+                                    '',
+                                    '',
+                                    ''
+                                ])
+                
+                messagebox.showinfo("Success", f"Batch results exported to {filename}")
+                
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export results:\n{str(e)}")
+        
     def _batch_thread(self, filepaths):
         options = {key: var.get() for key, var in self.preprocessing_options.items()}
         model_name = self.active_model_name.get()
@@ -989,7 +1928,7 @@ class AdvancedPlateRecognitionApp:
     def reprocess_image(self):
         """Reprocess current image with updated settings."""
         if self.current_image_path:
-            self.process_single_image()
+            self.process_single_image_with_auto_tune()
 
     def display_images(self, original_frame, processed_frame):
         """Display original and processed images with enhanced styling."""
