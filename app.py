@@ -11,7 +11,9 @@ import json
 from datetime import datetime
 import threading
 import time
-
+from basicsr.models.archs.NAFNet_arch import NAFNet
+import torch
+import urllib.request
 # --- Core Application Logic ---
 
 # Define the list of registered license plates (your "database")
@@ -31,10 +33,142 @@ except Exception as e:
     messagebox.showerror("EasyOCR Error", f"Failed to initialize EasyOCR.\nError: {e}")
     exit()
 
-def preprocess_image(image, preprocessing_options):
+class ImageRestorer:
+    """Manages NAFNet models for deblurring and denoising."""
+    def __init__(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"ImageRestorer using device: {self.device}")
+        self.deblur_model = None
+        self.denoise_model = None
+
+    def _load_model(self, model_type):
+        """Loads a specific NAFNet model and its weights from local files."""
+        if model_type == 'deblur':
+            # NAFNet-GoPro-width32 configuration
+            model = NAFNet(img_channel=3, width=32, middle_blk_num=1,
+                        enc_blk_nums=[1, 1, 1, 28], dec_blk_nums=[1, 1, 1, 1])
+            filename = 'NAFNet-GoPro.pth'
+            
+        elif model_type == 'denoise':
+            # NAFNet-SIDD-width32 configuration
+            model = NAFNet(img_channel=3, width=32, middle_blk_num=12,
+                        enc_blk_nums=[2, 2, 4, 8], dec_blk_nums=[2, 2, 2, 2])
+            filename = 'NAFNet-SIDD.pth'
+            
+        else:
+            raise ValueError("Invalid model type specified.")
+
+        model_dir = 'models'
+        model_path = os.path.join(model_dir, filename)
+
+        print(f"Loading local model from {model_path}...")
+
+        try:
+            # Load the state dict
+            state_dict = torch.load(model_path, map_location=self.device)
+            
+            # Handle different possible state dict structures
+            if 'params' in state_dict:
+                model.load_state_dict(state_dict['params'])
+            elif 'state_dict' in state_dict:
+                model.load_state_dict(state_dict['state_dict'])
+            elif 'model' in state_dict:
+                model.load_state_dict(state_dict['model'])
+            else:
+                # Assume the state_dict is directly the model parameters
+                model.load_state_dict(state_dict)
+            
+            model.to(self.device)
+            model.eval()
+            print("Model loaded successfully.")
+            
+        except FileNotFoundError:
+            print(f"Error: Model file not found at {model_path}")
+            print("Please make sure the model files are in the 'models' directory.")
+            raise
+        except Exception as e:
+            print(f"Error loading model: {str(e)}")
+            print("This might be due to model architecture mismatch or corrupted file.")
+            raise
+            
+        return model
+
+    def restore(self, image, mode='deblur'):
+        """Restores an image using either deblur or denoise model."""
+        if mode == 'deblur' and self.deblur_model is None:
+            self.deblur_model = self._load_model('deblur')
+        elif mode == 'denoise' and self.denoise_model is None:
+            self.denoise_model = self._load_model('denoise')
+
+        model = self.deblur_model if mode == 'deblur' else self.denoise_model
+        
+        # Get original image dimensions
+        h, w = image.shape[:2]
+        
+        # Preprocess image - NAFNet expects images to be padded to multiples of a certain size
+        # Pad to make dimensions divisible by 8 (common requirement for NAFNet)
+        pad_h = (8 - h % 8) % 8
+        pad_w = (8 - w % 8) % 8
+        
+        # Convert BGR to RGB
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Pad the image
+        img_padded = np.pad(img_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect')
+        
+        # Convert to tensor and normalize to [0, 1]
+        img_tensor = torch.from_numpy(img_padded.astype(np.float32) / 255.0)
+        img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0).to(self.device)
+
+        # Inference
+        with torch.no_grad():
+            restored_tensor = model(img_tensor)
+            
+            # Clamp values to [0, 1]
+            restored_tensor = torch.clamp(restored_tensor, 0, 1)
+
+        # Postprocess image
+        restored_img = restored_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
+        
+        # Remove padding
+        restored_img = restored_img[:h, :w, :]
+        
+        # Convert back to [0, 255] and uint8
+        restored_img = np.clip(restored_img * 255.0, 0, 255).astype(np.uint8)
+        
+        # Convert RGB back to BGR for OpenCV
+        return cv2.cvtColor(restored_img, cv2.COLOR_RGB2BGR)
+
+    def test_models(self):
+        """Test if models can be loaded successfully."""
+        try:
+            print("Testing deblur model...")
+            test_deblur = self._load_model('deblur')
+            print("✓ Deblur model loaded successfully")
+            del test_deblur
+            
+            print("Testing denoise model...")
+            test_denoise = self._load_model('denoise')
+            print("✓ Denoise model loaded successfully")
+            del test_denoise
+            
+            return True
+        except Exception as e:
+            print(f"✗ Model test failed: {str(e)}")
+            return False
+
+def preprocess_image(image, preprocessing_options, restorer=None):
     """Apply various preprocessing techniques to enhance image quality for better detection."""
     processed = image.copy()
-    
+    if restorer:
+        if preprocessing_options.get('deblur', False):
+            print("Applying NAFNet Deblur...")
+            processed = restorer.restore(processed, mode='deblur')
+
+        if preprocessing_options.get('denoise', False):
+            print("Applying NAFNet Denoise...")
+            processed = restorer.restore(processed, mode='denoise')
+
     # 1. Noise Reduction
     if preprocessing_options.get('noise_reduction', False):
         processed = cv2.bilateralFilter(processed, 9, 75, 75)
@@ -121,7 +255,7 @@ def process_image_batch(self, image_paths, preprocessing_options, progress_callb
         try:
             model_name = self.active_model_name.get()
             active_model = self.models.get(model_name)
-            processed_frame, plate_text, status, confidence, original_frame = process_image(active_model,image_path, preprocessing_options)
+            processed_frame, plate_text, status, confidence, original_frame = process_image(active_model,image_path, preprocessing_options, self.image_restorer)
             results.append({
                 'path': image_path,
                 'plate': plate_text,
@@ -142,7 +276,7 @@ def process_image_batch(self, image_paths, preprocessing_options, progress_callb
     
     return results
 
-def process_image(model, image_path, preprocessing_options):
+def process_image(model, image_path, preprocessing_options, restorer):
     """Main function that processes the uploaded image with preprocessing options."""
     try:
         frame = cv2.imread(image_path)
@@ -152,7 +286,7 @@ def process_image(model, image_path, preprocessing_options):
         original_frame = frame.copy()
         
         if any(preprocessing_options.values()):
-            frame = preprocess_image(frame, preprocessing_options)
+            frame = preprocess_image(frame, preprocessing_options, restorer)
 
         results = model(frame)
         all_detections = []
@@ -214,6 +348,7 @@ class AdvancedPlateRecognitionApp:
         self.root.minsize(1400, 900)
         self.models = {}
         self.active_model_name = tk.StringVar()
+        self.image_restorer = ImageRestorer() 
         self.load_models() # Load models on startup
         # Advanced styling
         self.setup_advanced_styles()
@@ -227,6 +362,8 @@ class AdvancedPlateRecognitionApp:
         
         # Preprocessing options with presets
         self.preprocessing_options = {
+            'deblur': tk.BooleanVar(),            
+            'denoise': tk.BooleanVar(),
             'noise_reduction': tk.BooleanVar(),
             'contrast_enhancement': tk.BooleanVar(),
             'brightness_contrast': tk.BooleanVar(),
@@ -513,7 +650,7 @@ class AdvancedPlateRecognitionApp:
                 
                 # Process with this combination
                 processed_frame, plate_text, status, confidence, original_frame = process_image(
-                    active_model, image_path, combination
+                    active_model, image_path, combination, self.image_restorer
                 )
                 
                 # Check if this result is better
@@ -710,6 +847,8 @@ class AdvancedPlateRecognitionApp:
         options_frame.pack(fill=tk.X, pady=10)
         
         options_display = {
+            'deblur': '🖼️ Deblur (NAFNet)',
+            'denoise': '✨ Denoise (NAFNet)',
             'noise_reduction': '🔧 Noise Reduction',
             'contrast_enhancement': '🌟 Contrast Boost', 
             'brightness_contrast': '☀️ Auto Exposure',
@@ -1302,7 +1441,7 @@ class AdvancedPlateRecognitionApp:
             model_name = self.active_model_name.get()
             active_model = self.models.get(model_name)
             processed_frame, plate_text, status, confidence, original_frame = process_image(active_model,
-                self.current_image_path, options)
+                self.current_image_path, options , self.image_restorer)
             
             # Update UI in main thread
             self.root.after(0, self._update_single_result, 
