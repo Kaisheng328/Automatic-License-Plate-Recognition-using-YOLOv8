@@ -823,7 +823,7 @@ class AdvancedPlateRecognitionApp:
     
     def create_preprocessing_card_with_auto_tune(self, parent):
         """Create smart preprocessing options card with auto-tune."""
-        card_frame = self.create_card(parent, "⚙️ Smart Image Enhancement", height=350)  # Increased height
+        card_frame = self.create_card(parent, "⚙️ Smart Image Enhancement", height=400)  # Increased height
         
         # Preset buttons (existing code)
         preset_frame = tk.Frame(card_frame, bg=self.colors['bg_tertiary'])
@@ -1590,7 +1590,7 @@ class AdvancedPlateRecognitionApp:
             
             for sample_path in sample_images:
                 try:
-                    _, _, _, confidence, _ = process_image(active_model, sample_path, combination)
+                    _, _, _, confidence, _ = process_image(active_model, sample_path, combination,self.image_restorer)
                     if confidence is not None:
                         total_confidence += confidence
                         valid_detections += 1
@@ -1618,7 +1618,7 @@ class AdvancedPlateRecognitionApp:
                             f"Processing with global settings {i+1}/{len(filepaths)}")
                 
                 processed_frame, plate_text, status, confidence, original_frame = process_image(
-                    active_model, filepath, best_global_combination)
+                    active_model, filepath, best_global_combination, self.image_restorer)
                 
                 results.append({
                     'path': filepath,
@@ -1716,7 +1716,7 @@ class AdvancedPlateRecognitionApp:
         for combination in combinations:
             try:
                 processed_frame, plate_text, status, confidence, original_frame = process_image(
-                    active_model, image_path, combination)
+                    active_model, image_path, combination, self.image_restorer)
                 
                 tests_performed += 1
                 
@@ -1758,7 +1758,7 @@ class AdvancedPlateRecognitionApp:
                     combination[key] = value
                 
                 processed_frame, plate_text, status, confidence, original_frame = process_image(
-                    active_model, image_path, combination)
+                    active_model, image_path, combination,self.image_restorer)
                 
                 tests_performed += 1
                 
@@ -1889,6 +1889,7 @@ class AdvancedPlateRecognitionApp:
                             justify=tk.LEFT)
         summary_label.pack(padx=20, pady=20, anchor="w")
         
+        results_text = "" # Initialize the variable here
         # Individual results
         if successful:
             results_text = "📋 DETAILED RESULTS:\n\n"
